@@ -2,7 +2,9 @@
 This code is based on the training code found at
 https://github.com/facebookresearch/fastMRI/blob/master/models/unet/train_unet.py
 """
+import warnings
 
+warnings.filterwarnings(action='ignore')
 import sys, os
 import gc
 import logging
@@ -28,15 +30,20 @@ from training_utils.models import IRIMfastMRI, RIMfastMRI
 from training_utils.data_loaders import create_training_loaders
 from training_utils.helpers import mse_gradient, estimate_to_image, image_loss, real_to_complex, complex_to_real
 
+from tqdm import tqdm
+
 torch.cuda.current_device()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = True
 
+
+# torch.backends.cudnn.benchmark = True
 
 def train_epoch(args, epoch, model, train_loader, optimizer, writer):
+    # print('train_epoch')
     model.train()
+
     avg_loss = 0.
     start_epoch = start_iter = time.perf_counter()
     global_step = epoch * len(train_loader)
@@ -52,6 +59,7 @@ def train_epoch(args, epoch, model, train_loader, optimizer, writer):
 
         optimizer.zero_grad()
         model.zero_grad()
+
         estimate = model.forward(y=y, mask=mask, metadata=metadata)
         if isinstance(estimate, list):
             loss = [image_loss(e, target, args, target_norm, target_max) for e in estimate]
@@ -60,6 +68,7 @@ def train_epoch(args, epoch, model, train_loader, optimizer, writer):
             loss = image_loss(estimate, target, args, target_norm, target_max)
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
         avg_loss = 0.99 * avg_loss + 0.01 * loss.item() if i > 0 else loss.item()
@@ -72,11 +81,12 @@ def train_epoch(args, epoch, model, train_loader, optimizer, writer):
         gc.collect()
 
         if i % args.report_interval == 0:
-            logging.info(
+            logger.info(
                 f'Epoch = [{epoch:3d}/{args.num_epochs:3d}] '
                 f'Iter = [{i:4d}/{len(train_loader):4d}] '
                 f'Loss = {loss.detach().item():.4g} Avg Loss = {avg_loss:.4g} '
                 f'Time = {time.perf_counter() - start_iter:.4f}s '
+                f'Remain Time = {(len(train_loader) - i) * (time.perf_counter() - start_iter) / 60:.4f}m '
                 f'Memory allocated (MB) = {np.min(memory_allocated):.2f}'
             )
             memory_allocated = []
@@ -213,6 +223,7 @@ def save_model(args, exp_dir, epoch, model, optimizer, best_dev_loss, is_new_bes
 
 
 def build_model(args):
+    # print('build_model')
     im_channels = 2 if args.challenge == 'singlecoil' else 30
     if args.use_rim:
         conv_nd = 3 if args.n_slices > 1 else 2
@@ -239,11 +250,12 @@ def build_model(args):
         if args.parametric_output:
             output_function = ResidualBlockPixelshuffle(channels[0], 2, channels[0], conv_nd=conv_nd, use_glu=False)
         else:
-            output_function = lambda x: complex_to_real(real_to_complex(x)[:,:im_channels // (2 * args.multiplicity)])
+            output_function = lambda x: complex_to_real(real_to_complex(x)[:, :im_channels // (2 * args.multiplicity)])
 
         model = IRIM(cell, grad_fun=mse_gradient, n_channels=im_channels)
         model = IRIMfastMRI(model, output_function, channels[0], multiplicity=args.multiplicity)
-
+    print(model)
+    # print('build model complete')
     return model.to(args.device)
 
 
@@ -261,12 +273,14 @@ def load_model(checkpoint_file):
 
 
 def build_optim(args, params):
+    # print('build_optim')
     if args.optimizer.upper() == 'RMSPROP':
         optimizer = torch.optim.RMSprop(params, args.lr, weight_decay=args.weight_decay)
     if args.optimizer.upper() == 'ADAM':
         optimizer = torch.optim.Adam(params, args.lr, weight_decay=args.weight_decay)
     if args.optimizer.upper() == 'SGD':
         optimizer = torch.optim.SGD(params, args.lr, weight_decay=args.weight_decay)
+    # print('build_optim complete')
     return optimizer
 
 
@@ -279,7 +293,6 @@ def main(args):
         checkpoint_path = os.path.join(args.exp_dir, 'model.pt')
     else:
         checkpoint_path = args.checkpoint
-
     if args.resume and os.path.exists(checkpoint_path):
         checkpoint, model, optimizer = load_model(checkpoint_path)
         args = checkpoint['args']
@@ -296,8 +309,6 @@ def main(args):
             optimizer.lr = args.lr
         best_dev_loss = 1e9
         start_epoch = 0
-    logging.info(args)
-    logging.info(model)
 
     train_loader, val_loader, display_loader = create_training_loaders(args)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_step_size, args.lr_gamma)
@@ -311,7 +322,7 @@ def main(args):
         is_new_best = -ssim_loss < best_dev_loss
         best_dev_loss = min(best_dev_loss, ssim_loss)
         save_model(args, args.exp_dir, epoch, model, optimizer, best_dev_loss, is_new_best)
-        logging.info(
+        logger.info(
             f'Epoch = [{epoch:4d}/{args.num_epochs:4d}] TrainLoss = {train_loss:.4g} '
             f'VAL_NMSE = {nmse_loss:.4g} VAL_MSE = {mse_loss:.4g} VAL_PSNR = {psnr_loss:.4g} '
             f'VAL_SSIM = {ssim_loss:.4g} \n'
@@ -380,6 +391,7 @@ def create_arg_parser():
 
 
 if __name__ == '__main__':
+    print(torch.cuda.get_device_properties('cuda:0'))
     args = create_arg_parser().parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)

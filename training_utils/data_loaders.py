@@ -56,6 +56,7 @@ def create_training_loaders(args):
         num_workers=args.num_workers,
         pin_memory=True,
     )
+    #print('create_training_loaders complete')
     return train_loader, val_loader, display_loader
 
 

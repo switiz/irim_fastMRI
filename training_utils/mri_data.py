@@ -54,17 +54,23 @@ class SliceData(Dataset):
         return len(self.examples)
 
     def __getitem__(self, i):
-        fname, slice = self.examples[i]
+        fname, val_slices = self.examples[i]
+        if isinstance(val_slices, range):
+            slices = slice(len(val_slices))
+        else:
+            slices = val_slices
         with h5py.File(fname, 'r') as data:
-            kspace = data['kspace'][slice].squeeze()
-            target = data[self.recons_key][slice].squeeze() if self.recons_key in data else None
+            kspace = data['kspace'][slices].squeeze()
+            target = data[self.recons_key][slices].squeeze() if self.recons_key in data else None
             contrast_type, metadata = export_attrs(data['ismrmrd_header'], data.attrs['acquisition'])
             attributes = dict(data.attrs.items())
             attributes['contrast_type'] = contrast_type
             attributes['metadata'] = metadata
             if 'norm' in attributes:
                 attributes['norm'] = attributes['norm'] / data['kspace'].shape[0]**0.5
-            return self.transform(kspace, target, attributes, fname.name, slice, n_slices=self.n_slices)
+            if isinstance(val_slices, range):
+                slices = list(val_slices)
+            return self.transform(kspace, target, attributes, fname.name, slices, n_slices=self.n_slices)
 
 def export_attrs(ismrmrd_header, acquisition):
     xml_header = ismrmrd_header[()].decode('UTF-8')

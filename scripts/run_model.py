@@ -24,9 +24,11 @@ torch.backends.cudnn.benchmark = False
 def run_rim(args, model, data_loader):
     model.eval()
     reconstructions = defaultdict(list)
+    total = len(data_loader)
     with torch.no_grad():
-        for i, (y, mask, metadata, fnames, slices) in enumerate(data_loader):
-            print('Reconstruction '+str(i))
+        for i, data in enumerate(data_loader):
+            y, mask, metadata, fnames, n_slice = data
+            print('Reconstruction '+str(i)+'/'+str(total))
 
             y = y.to(args.device)
             mask = mask.to(args.device)
@@ -48,7 +50,7 @@ def run_rim(args, model, data_loader):
                 output = torch.cat(output, 0)
 
             for i in range(output.shape[0]):
-                reconstructions[fnames[0]].append((slices[i].numpy(), output[i].numpy()))
+                reconstructions[fnames[0]].append((n_slice[i].numpy(), output[i].numpy()))
 
             gc.collect()
             torch.cuda.empty_cache()
@@ -63,7 +65,7 @@ def main(args):
     data_loader = create_testing_loaders(args)
     checkpoint, model, optimizer = load_model(args.checkpoint)
     args.n_slices = checkpoint['args'].n_slices
-    print('Reconstructing...')
+    print('Reconstructing...:', args.n_slices)
     reconstructions = run_rim(args, model, data_loader)
     print('Saving...')
     save_reconstructions(reconstructions, args.out_dir)

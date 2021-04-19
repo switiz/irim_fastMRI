@@ -72,7 +72,7 @@ def image_loss(estimate, target, args, target_norm=None, target_max=None):
     if 0. < args.loss_subsample < 1.:
         mask = torch.torch.bernoulli(args.loss_subsample * mask)
 
-    loss = mask * loss_fun(image,target)
+    loss = mask * loss_fun(image, target)
     loss = loss.sum((-3,-2,-1)) / mask.sum((-3,-2,-1))
     if args.loss == 'nmse':
         loss = loss * mask[0].numel()
